@@ -1,0 +1,77 @@
+{
+  "test_id": "bugrepro-ln-003",
+  "name": "Multi-node Link Recovery After Cold Power Cycle",
+  "description": "Simulate multi-host link recovery scenario after simultaneous cold resets to verify switch fabric stability and re-enumeration timing.",
+  "tags": ["bugrepro", "link", "fabric", "multi-node"],
+  "metadata": {
+    "author": "platform-validation",
+    "created_at": "2025-10-16T12:00:00-07:00",
+    "priority": "P0",
+    "version": "1.0"
+  },
+  "targets": [
+    {
+      "name": "compute-node-11",
+      "id": "node-11",
+      "interface": { "type": "RackManager", "endpoint": "rack5/slot11" }
+    },
+    {
+      "name": "compute-node-12",
+      "id": "node-12",
+      "interface": { "type": "RackManager", "endpoint": "rack5/slot12" }
+    }
+  ],
+  "preconditions": [
+    "Both nodes connected to same Top-of-Rack (ToR) switch",
+    "Configured for RDMA/InfiniBand or Ethernet link",
+    "Fabric manager (FM) or OFED monitoring enabled"
+  ],
+  "steps": [
+    {
+      "step_number": 1,
+      "action": "capture_pre_state",
+      "command": "ssh",
+      "args": { "cmd": "ibstat | tee /tmp/pre_ibstat.txt" }
+    },
+    {
+      "step_number": 2,
+      "action": "simultaneous_cold_reset",
+      "command": "rackmgr vreset -i 11,12",
+      "timeout_seconds": 240,
+      "notes": "Power cycle both nodes concurrently to stress link recovery"
+    },
+    {
+      "step_number": 3,
+      "action": "wait_for_network_restore",
+      "command": "ping -c 20 10.0.1.12",
+      "target_ids": ["node-11"],
+      "timeout_seconds": 180,
+      "expect": "0% packet loss"
+    },
+    {
+      "step_number": 4,
+      "action": "validate_fabric_reconnect",
+      "command": "ssh",
+      "args": { "cmd": "iblinkinfo | grep -E 'LinkUp|Active'" },
+      "expect": "LinkUp"
+    },
+    {
+      "step_number": 5,
+      "action": "collect_post_ibstat",
+      "command": "ssh",
+      "args": { "cmd": "ibstat | tee /tmp/post_ibstat.txt" }
+    }
+  ],
+  "expected_outcome": {
+    "power_state": "on",
+    "service_availability": "fabric links stable on all nodes",
+    "max_boot_time_seconds": 240
+  },
+  "metrics": [
+    { "name": "link_restore_time", "description": "Seconds until fabric fully recovered", "unit": "s" },
+    { "name": "link_flaps_detected", "description": "Number of link flaps detected post reboot", "unit": "count" }
+  ],
+  "artifacts": [
+    { "type": "log", "path": "logs/bugrepro-ln-003/pre_post_ibstat.log", "description": "Pre and post IB link states" }
+  ]
+}
