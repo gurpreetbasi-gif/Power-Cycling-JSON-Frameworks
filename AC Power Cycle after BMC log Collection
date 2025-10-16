@@ -1,0 +1,143 @@
+{
+  "test_id": "acpc-bmc-001",
+  "name": "AC Power Cycle with BMC Log Collection",
+  "description": "Perform repeated AC power cycles and collect BMC logs (SEL/debug) after each iteration for stability and error pattern analysis.",
+  "tags": ["power-cycle", "bmc", "ac", "log-collection", "reliability"],
+  "metadata": {
+    "author": "platform-validation",
+    "created_at": "2025-10-16T12:45:00-07:00",
+    "priority": "P0",
+    "version": "1.0"
+  },
+  "targets": [
+    {
+      "name": "compute-node-05",
+      "id": "node-05",
+      "interface": {
+        "type": "RackManager",
+        "endpoint": "rack7/slot05",
+        "options": { "method": "ac_cycle" }
+      },
+      "expected_power_state": "on"
+    }
+  ],
+  "parameters": {
+    "cycle_count": 50,
+    "wait_after_power_on_seconds": 180,
+    "bmc_log_dir": "logs/acpc-bmc-001/node-05/",
+    "bmc_log_types": ["sel", "debug", "redfish"]
+  },
+  "preconditions": [
+    "System is connected to controllable AC power source (RackManager/PDU)",
+    "BMC is reachable on management network post power restoration",
+    "Credential set 'creds-bmc-admin' available"
+  ],
+  "steps": [
+    {
+      "step_number": 1,
+      "action": "initialize_environment",
+      "command": "setup_environment",
+      "args": {
+        "create_log_dir": true,
+        "clear_previous_results": true
+      },
+      "notes": "Prepare directories for per-cycle BMC logs."
+    },
+    {
+      "step_number": 2,
+      "action": "loop_ac_cycles",
+      "command": "loop",
+      "args": {
+        "count": 50,
+        "body": [
+          {
+            "action": "ac_power_off",
+            "command": "rackmgr acoff -i 5",
+            "timeout_seconds": 30,
+            "expect": "AC power removed"
+          },
+          {
+            "action": "wait_power_off_delay",
+            "command": "sleep",
+            "args": { "seconds": 10 },
+            "notes": "Allow system discharge"
+          },
+          {
+            "action": "ac_power_on",
+            "command": "rackmgr acon -i 5",
+            "timeout_seconds": 60,
+            "expect": "AC power restored"
+          },
+          {
+            "action": "wait_system_boot",
+            "command": "wait_for_ping",
+            "args": { "host": "192.168.50.105", "timeout_seconds": 180 },
+            "notes": "Wait for BMC to come online"
+          },
+          {
+            "action": "collect_bmc_logs",
+            "command": "ipmitool sel elist",
+            "target_ids": ["node-05"],
+            "timeout_seconds": 60,
+            "post_action": {
+              "save_to": "logs/acpc-bmc-001/node-05/sel_cycle_${loop_index}.log"
+            }
+          },
+          {
+            "action": "collect_debug_log",
+            "command": "./cerberus_utility.exe -e c debuglogread",
+            "timeout_seconds": 120,
+            "post_action": {
+              "save_to": "logs/acpc-bmc-001/node-05/debug_cycle_${loop_index}.log"
+            }
+          },
+          {
+            "action": "clear_debug_log",
+            "command": "./cerberus_utility.exe -e c debuglogclear",
+            "timeout_seconds": 10
+          },
+          {
+            "action": "collect_redfish_events",
+            "command": "curl -k -u admin:password https://192.168.50.105/redfish/v1/Managers/BMC/LogServices/EventLog/Entries",
+            "timeout_seconds": 60,
+            "post_action": {
+              "save_to": "logs/acpc-bmc-001/node-05/redfish_cycle_${loop_index}.json"
+            }
+          },
+          {
+            "action": "archive_cycle_logs",
+            "command": "compress_logs",
+            "args": {
+              "src_dir": "logs/acpc-bmc-001/node-05/",
+              "dest_file": "logs/acpc-bmc-001/archive/cycle_${loop_index}.zip"
+            }
+          }
+        ]
+      },
+      "notes": "Repeat the power cycle N times and capture BMC logs each iteration."
+    }
+  ],
+  "expected_outcome": {
+    "power_state": "on",
+    "service_availability": "BMC reachable and responsive after every AC cycle",
+    "max_boot_time_seconds": 180
+  },
+  "metrics": [
+    { "name": "successful_cycles", "description": "Number of successful power cycles", "unit": "count" },
+    { "name": "failed_cycles", "description": "Number of cycles with BMC unresponsive", "unit": "count" },
+    { "name": "average_boot_time", "description": "Mean time for BMC to respond to ping", "unit": "seconds" }
+  ],
+  "artifacts": [
+    { "type": "log", "path": "logs/acpc-bmc-001/", "description": "All BMC log dumps for each AC cycle" },
+    { "type": "zip", "path": "logs/acpc-bmc-001/archive/", "description": "Cycle-by-cycle archived logs" }
+  ],
+  "notifications": {
+    "on_failure": ["bmc-validation@company.local", "firmware-debug@company.local"],
+    "on_success": ["qa-dashboard@company.local"]
+  },
+  "cleanup": [
+    "restore_ac_power_state_to_on",
+    "verify_system_boots_to_os",
+    "archive_logs_to_server"
+  ]
+}
