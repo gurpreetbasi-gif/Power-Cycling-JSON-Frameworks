@@ -1,0 +1,85 @@
+{
+  "test_id": "bugrepro-rdp-002",
+  "name": "RDP Connectivity Loss After Power Cycle",
+  "description": "Reproduce RDP disconnection issue post firmware reboot; verify restoration and session persistence.",
+  "tags": ["bugrepro", "rdp", "windows", "connectivity"],
+  "metadata": {
+    "author": "qa_network_team",
+    "created_at": "2025-10-16T11:45:00-07:00",
+    "priority": "P1",
+    "version": "1.1"
+  },
+  "targets": [
+    {
+      "name": "win-compute-01",
+      "id": "win01",
+      "interface": {
+        "type": "IPMI",
+        "endpoint": "192.168.200.11",
+        "credentials_id": "creds-ipmi-win"
+      },
+      "expected_power_state": "on"
+    }
+  ],
+  "preconditions": [
+    "Windows Server 2022 installed with RDP enabled",
+    "User 'testuser' credentials configured for RDP test",
+    "Network path 10.0.0.20 reachable before cycle"
+  ],
+  "steps": [
+    {
+      "step_number": 1,
+      "action": "start_rdp_session_monitor",
+      "command": "powershell",
+      "args": {
+        "cmd": "Start-Process powershell -ArgumentList 'Test-RDPSession -ComputerName 10.0.0.20 -User testuser' -NoNewWindow"
+      },
+      "notes": "Simulate active RDP session monitoring before reboot"
+    },
+    {
+      "step_number": 2,
+      "action": "cold_reboot",
+      "command": "ipmitool chassis power reset",
+      "target_ids": ["win01"],
+      "timeout_seconds": 90
+    },
+    {
+      "step_number": 3,
+      "action": "wait_for_os_boot",
+      "command": "Test-Connection 10.0.0.20 -Count 10",
+      "timeout_seconds": 120,
+      "expect": "0% packet loss"
+    },
+    {
+      "step_number": 4,
+      "action": "validate_rdp_reconnect",
+      "command": "powershell",
+      "args": {
+        "cmd": "Test-RDPSession -ComputerName 10.0.0.20 -User testuser"
+      },
+      "expect": "RDP Connection Successful",
+      "timeout_seconds": 60
+    },
+    {
+      "step_number": 5,
+      "action": "log_event_viewer",
+      "command": "powershell",
+      "args": {
+        "cmd": "Get-EventLog -LogName System -Newest 50 | ? { $_.Source -like '*TermService*' }"
+      },
+      "timeout_seconds": 30
+    }
+  ],
+  "expected_outcome": {
+    "power_state": "on",
+    "service_availability": "RDP reconnects automatically after reboot",
+    "max_boot_time_seconds": 120
+  },
+  "metrics": [
+    { "name": "rdp_recovery_time_seconds", "description": "Time until RDP reconnects after power on", "unit": "s" },
+    { "name": "reconnect_success", "description": "True/False for RDP restoration", "unit": "boolean" }
+  ],
+  "artifacts": [
+    { "type": "log", "path": "logs/bugrepro-rdp-002/rdp_test.log", "description": "RDP connectivity validation log" }
+  ]
+}
