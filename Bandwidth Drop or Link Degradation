@@ -1,0 +1,89 @@
+{
+  "test_id": "bugrepro-ld-001",
+  "name": "Link Degradation Repro - Repeated Power Cycle under Load",
+  "description": "Reproduce link degradation issue observed after multiple power cycles under sustained traffic.",
+  "tags": ["bugrepro", "link", "network", "power-cycle"],
+  "metadata": {
+    "author": "validation_team",
+    "created_at": "2025-10-16T11:30:00-07:00",
+    "priority": "P0",
+    "version": "1.0"
+  },
+  "targets": [
+    {
+      "name": "compute-node-02",
+      "id": "node-02",
+      "interface": {
+        "type": "RackManager",
+        "endpoint": "rackmgr://rack5/slot12",
+        "options": { "method": "vreset" }
+      },
+      "expected_power_state": "on"
+    }
+  ],
+  "preconditions": [
+    "Network interface eth0 connected to 100G switch port",
+    "iperf3 installed on sender and receiver nodes",
+    "Monitoring agent running to capture throughput and errors"
+  ],
+  "steps": [
+    {
+      "step_number": 1,
+      "action": "start_network_load",
+      "command": "ssh",
+      "args": {
+        "host": "sender-node",
+        "cmd": "iperf3 -c 10.0.0.102 -t 300 -P 8 -i 10 > /tmp/iperf_sender.log &"
+      },
+      "notes": "Start 5-minute sustained network traffic"
+    },
+    {
+      "step_number": 2,
+      "action": "power_cycle_during_traffic",
+      "command": "rackmgr vreset -i 12",
+      "target_ids": ["node-02"],
+      "timeout_seconds": 180,
+      "notes": "Power-cycle node while link is active"
+    },
+    {
+      "step_number": 3,
+      "action": "wait_for_reconnect",
+      "command": "ping -c 20 10.0.0.102",
+      "timeout_seconds": 120,
+      "expect": "0% packet loss"
+    },
+    {
+      "step_number": 4,
+      "action": "validate_link_speed",
+      "command": "ssh",
+      "args": {
+        "host": "node-02",
+        "cmd": "ethtool eth0 | grep Speed"
+      },
+      "expect": "100000Mb/s",
+      "timeout_seconds": 30
+    },
+    {
+      "step_number": 5,
+      "action": "collect_dmesg_logs",
+      "command": "ssh",
+      "args": {
+        "host": "node-02",
+        "cmd": "dmesg | grep -i eth0 > /tmp/eth_logs.txt"
+      }
+    }
+  ],
+  "expected_outcome": {
+    "power_state": "on",
+    "service_availability": "network link stable",
+    "max_boot_time_seconds": 180
+  },
+  "metrics": [
+    { "name": "link_speed_mbps", "description": "Reported NIC link speed", "unit": "Mb/s" },
+    { "name": "recovery_time_seconds", "description": "Seconds to restore full link", "unit": "s" }
+  ],
+  "artifacts": [
+    { "type": "log", "path": "logs/bugrepro-ld-001/eth_logs.txt", "description": "Driver messages post power cycle" },
+    { "type": "csv", "path": "results/bugrepro-ld-001/metrics.csv", "description": "Network metrics summary" }
+  ]
+}
