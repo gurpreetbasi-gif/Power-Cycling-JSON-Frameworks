@@ -1,0 +1,121 @@
+{
+  "test_id": "pc-001",
+  "name": "Basic cold power-cycle (IPMI) - single node",
+  "description": "Cold-reset the BMC and power-cycle the node, verify OS boot and network availability.",
+  "tags": ["power-cycle", "ipmi", "sanity", "regression"],
+  "metadata": {
+    "author": "qa_team",
+    "created_at": "2025-10-16T11:00:00-07:00",
+    "priority": "P1",
+    "version": "1.0"
+  },
+  "targets": [
+    {
+      "name": "compute-node-01",
+      "id": "node-01",
+      "interface": {
+        "type": "IPMI",
+        "endpoint": "192.168.100.101",
+        "credentials_id": "creds-ipmi-admin",
+        "options": {
+          "lan_channel": 1
+        }
+      },
+      "expected_power_state": "on"
+    }
+  ],
+  "preconditions": [
+    "Node is reachable on management network",
+    "BMC credentials (creds-ipmi-admin) available to test runner",
+    "OS running and accessible via ssh before test starts"
+  ],
+  "steps": [
+    {
+      "step_number": 1,
+      "action": "clear_sel_and_logs",
+      "command": "ipmitool sel clear",
+      "target_ids": ["node-01"],
+      "timeout_seconds": 30,
+      "notes": "Clear BMC SEL to remove noise from prior tests."
+    },
+    {
+      "step_number": 2,
+      "action": "record_pre_power_state",
+      "command": "ipmitool chassis power status",
+      "target_ids": ["node-01"],
+      "timeout_seconds": 10,
+      "notes": "Record current power state"
+    },
+    {
+      "step_number": 3,
+      "action": "power_off",
+      "command": "ipmitool chassis power off",
+      "target_ids": ["node-01"],
+      "timeout_seconds": 60,
+      "retry": { "count": 2, "interval_seconds": 10 },
+      "expect": "Chassis Power is off"
+    },
+    {
+      "step_number": 4,
+      "action": "wait_post_power_off",
+      "command": "sleep",
+      "args": { "seconds": 15 },
+      "timeout_seconds": 15,
+      "notes": "Allow capacitors to discharge"
+    },
+    {
+      "step_number": 5,
+      "action": "power_on",
+      "command": "ipmitool chassis power on",
+      "target_ids": ["node-01"],
+      "timeout_seconds": 60,
+      "expect": "Chassis Power is on"
+    },
+    {
+      "step_number": 6,
+      "action": "wait_for_boot",
+      "command": "wait_for_ssh",
+      "args": { "host": "10.0.0.101", "port": 22, "timeout_seconds": 300 },
+      "timeout_seconds": 300,
+      "notes": "Wait until OS accepts SSH"
+    },
+    {
+      "step_number": 7,
+      "action": "collect_fw_versions",
+      "command": "ssh",
+      "args": { "cmd": "/usr/local/bin/fw_versions.sh" },
+      "timeout_seconds": 30,
+      "notes": "Capture firmware versions after boot"
+    },
+    {
+      "step_number": 8,
+      "action": "health_check",
+      "command": "ssh",
+      "args": { "cmd": "systemctl is-system-running || uptime" },
+      "timeout_seconds": 30,
+      "expect": "running",
+      "notes": "Basic service check"
+    }
+  ],
+  "expected_outcome": {
+    "power_state": "on",
+    "service_availability": "ssh reachable and systemd running",
+    "max_boot_time_seconds": 300
+  },
+  "metrics": [
+    { "name": "time_to_boot_seconds", "description": "Seconds from power on to SSH reachable", "unit": "s" },
+    { "name": "power_cycle_result", "description": "Pass/Fail for the power cycle", "unit": "string" }
+  ],
+  "artifacts": [
+    { "type": "log", "path": "logs/pc-001/node-01-power.log", "description": "IPMI and test-run logs" },
+    { "type": "csv", "path": "results/pc-001/metrics.csv", "description": "Recorded metrics" }
+  ],
+  "notifications": {
+    "on_failure": ["eng-team@company.local", "qa-alerts@company.local"],
+    "on_success": ["qa-dashboard@company.local"]
+  },
+  "cleanup": [
+    "restore_previous_bmc_settings_if_changed",
+    "archive_logs"
+  ]
+}
